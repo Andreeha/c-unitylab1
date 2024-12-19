@@ -470,6 +470,7 @@ Level fifthLevel() {
 }
 
 int main () {
+  SetTraceLogLevel(LOG_NONE);
   InitWindow(screenWidth, screenHeight, "c++lab");
   SetTargetFPS(World.TARGET_FPS);
 
