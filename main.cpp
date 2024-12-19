@@ -1,10 +1,150 @@
 #include <stdlib.h>
 #include "raylib.h"
+#include <cmath>
 #include <string>
 #include <vector>
 #include <fstream>
 
-const int screenWidth = 800, screenHeight = 600;
+const int screenWidth = 800;
+const int screenHeight = 600;
+
+class Hittable {
+public:
+  float x,y,w,h;
+  Hittable() {}
+  Hittable(float x, float y, float w, float h) {
+    this->x = x;
+    this->y = y;
+    this->w = w;
+    this->h = h;
+  }
+  bool Intersects (Hittable hi) {
+    return
+    !(hi.x > x + w ||
+    hi.x + hi.w < x ||
+    hi.y > y + h ||
+    hi.y + hi.h < y);
+  }
+};
+
+class Drawable : public Hittable {
+protected:
+  Color c;
+public:
+  Drawable() {}
+  Drawable(float x, float y, float w, float h, Color c) : Hittable(x, y, w, h) {
+    this->c = c;
+  }
+  virtual void Draw() {
+    DrawRectangle(x, y, w, h, c);
+  }
+};
+
+class Runner : public Drawable {
+protected: 
+  float xspeed, yspeed;
+public:
+  Runner() {}
+  Runner(float x, float y, float w, float h, Color c, float xspeed, float yspeed) : Drawable(x, y, w, h, c) {
+    this->xspeed = xspeed;
+    this->yspeed = yspeed;
+  }
+  virtual void Update() {
+  }
+};
+
+class Player : public Runner {
+  bool grounded;
+  bool alive;
+  bool win;
+public:
+  int BoxCast(int xd, int yd, bool noret);
+  Player() {
+    grounded = 0;
+    alive = 1;
+    win = 0;
+  }
+  Player(float x, float y, float w, float h, Color c, float xspeed, float yspeed) : Runner(x, y, w, h, c, xspeed, yspeed) {
+    grounded = 0;
+    alive = 1;
+    win = 0;
+  }
+  void Update() override;
+  bool isAlive() { return alive; }
+  bool isWin() { return win; }
+};
+
+class Enemy : public Runner {
+  float minx, maxx;
+  float miny, maxy;
+public:
+  Enemy() {}
+  Enemy(float x, float y, float w, float h, Color c, float xspeed, float yspeed, float minx, float maxx, float miny, float maxy) : Runner(x, y, w, h, c, xspeed, yspeed) {
+    this->minx = minx;
+    this->miny = miny;
+    this->maxx = maxx;
+    this->maxy = maxy;
+  }
+  void Update() override;
+};
+
+class Level {
+public:
+  Level() {}
+  int levelId;
+  std::vector<Enemy> enemies;
+  std::vector<Hittable> deathzones;
+  std::vector<Drawable> winzones;
+  std::vector<Drawable> platforms;
+  Player player;
+  void Apply();
+};
+
+class _World {
+public:
+  _World() {
+    levelId = LoadLevelId();
+    inMainMenu = 1;
+    dt = 1.f / TARGET_FPS;
+    exit = 0;
+    camera.offset = {screenWidth / 2, screenHeight / 2};
+    camera.zoom = 1;
+    a = 200;
+    yspeed = 200;
+  }
+   inline int LoadLevelId() {
+    std::ifstream in("results.txt");
+    int res;
+    in >> res;
+    in.close();
+    return res;
+  }
+   inline void StoreLevelId() {
+    std::ofstream out("results.txt");
+    out << levelId;
+    out.close();
+  }
+  const int TARGET_FPS = 60;
+  float dt;
+  float a;
+  float yspeed;
+  int levelId;
+  bool inMainMenu;
+  std::vector<Hittable*> deadly;
+  std::vector<Hittable> winzones;
+  std::vector<Drawable> entities;
+  std::vector<Enemy> enemies;
+  std::vector<Level> levels;
+  Player player;
+  Camera2D camera;
+  bool exit;
+  inline void UpdateCamera() {
+    camera.target = { player.x + player.w / 2, player.y + player.h / 2 };
+  }
+  inline void Draw();
+};
+
+_World World;
 
 class Button {
   int x, y, w, h, fontSize;
@@ -29,353 +169,6 @@ public:
   }
 };
 
-class Platform {
-  int x, y, w, h;
-  Color c;
-  int Inside(double x_, double y_, double w_, double h_, Vector2 p, bool shout) {
-    bool res = x_ < p.x && p.x < x_ + w_ && y_ < p.y && p.y < y_ + h_;
-    return res;
-  }
-public:
-  Platform(int x, int y, int w, int h) {
-    this->x = x;
-    this->y = y;
-    this->w = w;
-    this->h = h;
-    c = BLACK;
-  }
-  void Draw() {
-    DrawRectangle(x, y, w, h, c);
-  }
-  int Intersects(double x_, double y_, double w_, double h_, bool shout = false) {
-    Vector2 mp1{(float)x+2, (float)y};
-    Vector2 mp2{(float)x+2, (float)y+h};
-    Vector2 mp3{(float)x+w-2, (float)y+h};
-    Vector2 mp4{(float)x+w-2, (float)y};
-    Vector2 op1{(float)x_,(float) y_};
-    Vector2 op2{(float)x_,(float) y_+h_};
-    Vector2 op3{(float)x_+w_, (float)y_+h_};
-    Vector2 op4{(float)x_+w_, (float)y_};
-    return 
-      Inside(x, y, w, h, op1, shout) ||
-      Inside(x, y, w, h, op2, shout) ||
-      Inside(x, y, w, h, op3, shout) ||
-      Inside(x, y, w, h, op4, shout) ||
-      Inside(x_, y_, w_, h_, mp1, shout) ||
-      Inside(x_, y_, w_, h_, mp2, shout) ||
-      Inside(x_, y_, w_, h_, mp3, shout) ||
-      Inside(x_, y_, w_, h_, mp4, shout);
-  }
-  void setColor(Color c) { this->c = c; }
-};
-
-class Enemy {
-  float x, y;
-  int w, h, mxx, mnx, mxy, mny, xspeed, yspeed;
-  float dt;
-public:
-  Enemy(int x, int y, int w, int h, int mxx, int mnx, int mxy, int mny, int xspeed, int yspeed, float dt) {
-    this->x = x;
-    this->y = y;
-    this->w = w;
-    this->h = h;
-    this->mxx = mxx;
-    this->mnx = mnx;
-    this->mxy = mxy;
-    this->mny = mny;
-    this->xspeed = xspeed;
-    this->yspeed = yspeed;
-    this->dt = dt;
-  }
-  void Update() {
-    if (xspeed && (x > mxx || x < mnx)) xspeed *= -1;
-    if (yspeed && (y > mxy || y < mny)) yspeed *= -1;
-    x += dt * xspeed;
-    y += dt * yspeed;
-  }
-  bool Intersects(double x_, double y_, double w_, double h_, bool shout = false) {
-    Platform p(x, y, w, h);
-    return p.Intersects(x_, y_, w_, h_, shout);
-  }
-  void Draw() {
-    DrawRectangle(x, y, w, h, YELLOW);
-  }
-};
-
-std::vector<Platform> Platforms;
-std::vector<Platform> deathzones;
-std::vector<Platform> winzones;
-std::vector<Enemy>    enemies;
-
-class Player {
-  double x, y;
-  double w, h, xspeed, yspeed;
-  double cxspeed, cyspeed;
-  double dt, a;
-  bool grounded, alive, win;
-  int BoxCast(int xd, int yd, bool noret = false) {
-    double h_ = 0.2;
-    double w_ = 2;
-    if (xd < 0) {
-      for (int i = 0; i < Platforms.size(); i++) {
-        if (!noret && Platforms[i].Intersects(x-w_, y, w_, h-2, 1)) {
-          return 1;
-        }
-      }
-      for (int i = 0; i < winzones.size(); i++) {
-        if (winzones[i].Intersects(x-w_, y, w_, h)) {
-          win = 1;
-        }
-      }
-      for (int i = 0; i < enemies.size(); i++) {
-        if (enemies[i].Intersects(x-w_, y, w_, h, 1)) {
-          alive = 0;
-        }
-      }
-    }
-    if (xd > 0) {
-      for (int i = 0; i < Platforms.size(); i++) {
-        if (!noret && Platforms[i].Intersects(x+w, y, w_, h-2, 1)) {
-          return 1;
-        }
-      }
-      for (int i = 0; i < winzones.size(); i++) {
-        if (winzones[i].Intersects(x+w, y, w_, h)) {
-          win = 1;
-        }
-      }
-      for (int i = 0; i < enemies.size(); i++) {
-        if (enemies[i].Intersects(x+w, y, w_, h, 1)) {
-          alive = 0;
-        }
-      }
-    }
-    if (yd < 0) {
-      for (int i = 0; i < Platforms.size(); i++) {
-        if (!noret && Platforms[i].Intersects(x+2, y-h_, w-4, h_)) {
-          return 1;
-        } 
-      }
-      for (int i = 0; i < winzones.size(); i++) {
-        if (winzones[i].Intersects(x, y-h_, w, h_)) {
-          win = 1;
-        }
-      }
-      for (int i = 0; i < enemies.size(); i++) {
-        if (enemies[i].Intersects(x, y-h_, w, h_)) {
-          alive = 0;
-        } 
-      }
-    }
-    if (yd > 0) {
-      for (int i = 0; i < Platforms.size(); i++) {
-        if (!noret && Platforms[i].Intersects(x+2, y + h, w-4, h_)) {
-          return 1;
-        }
-      }
-      for (int i = 0; i < enemies.size(); i++) {
-        if (enemies[i].Intersects(x, y + h, w, h_)) {
-          alive = 0;
-        }
-      }
-      for (int i = 0; i < winzones.size(); i++) {
-        if (winzones[i].Intersects(x, y + h, w, h_)) {
-          win = 1;
-        }
-      }
-      for (int i = 0; i < deathzones.size(); i++) {
-        if (alive && deathzones[i].Intersects(x, y + h, w, h_)) {
-          alive = 0;
-        }
-      }
-    }
-    return 0;
-  }
-public:
-  Player() {}
-  Player(Player &p) {
-    this->x = p.x;
-    this->y = p.y;
-    this->w = p.w;
-    this->h = p.h;
-    this->xspeed = p.xspeed;
-    this->yspeed = p.yspeed;
-    this->cxspeed = p.cxspeed;
-    this->cyspeed = p.cyspeed;
-    this->dt = p.dt;
-    this->a = p.a;
-    grounded = p.grounded; 
-    alive = p.alive;
-    win = p.win;
-  }
-  Player(int x, int y, int w, int h, int xspeed, int yspeed, double dt, double a) {
-    this->x = x;
-    this->y = y;
-    this->w = w;
-    this->h = h;
-    this->xspeed = xspeed;
-    this->yspeed = yspeed;
-    this->cxspeed = 0;
-    this->cyspeed = 0;
-    this->dt = dt;
-    this->a = a;
-    grounded = 0;
-    alive = 1;
-    win = 0;
-  }
-  void ApplyInput() {
-    if (IsKeyDown(KEY_A)) {
-      cxspeed = -xspeed;
-    } else if (IsKeyDown(KEY_D)) {
-      cxspeed = xspeed;
-    } else {
-      cxspeed = 0;
-    }
-    if (grounded && IsKeyPressed(KEY_SPACE)) {
-      cyspeed = -yspeed;
-      grounded = 0;
-    }
-  }
-  void Draw() {
-    DrawRectangle(x, y, w, h, RED);
-  }
-  void Update() {
-    BoxCast(1, 1, 1);
-    BoxCast(-1, -1, 1);
-    if (BoxCast(cxspeed, 0)) {
-      cxspeed = 0;
-    }
-    x += cxspeed * dt;
-    if (cyspeed >= 0 && !BoxCast(0, 1)) grounded = 0;
-    if (cyspeed >= 0 && BoxCast(0, 1)) {
-      cyspeed = 0;
-      grounded = 1;
-    } else if (cyspeed < 0 && BoxCast(0, -1)) {
-      cyspeed = 0;
-    } else {
-      cyspeed += a * dt;
-    }
-    y += cyspeed * dt;
-  }
-  Vector2 CamTarget() {
-    return Vector2{x + w / 2, y + h / 2};
-  }
-  bool Alive() {
-    return alive;
-  }
-  bool Win() {
-    return win;
-  }
-};
-
-class Level {
-  Player p;
-  std::vector<Platform> platforms;
-  std::vector<Platform> deathzones;
-  std::vector<Platform> winzones;
-  std::vector<Enemy> enemies;
-public:
-  Level (Player &p, std::vector<Platform> &platforms, std::vector<Platform> &deathzones, std::vector<Platform> &winzones, std::vector<Enemy> &enemies) {
-    this->p = p;
-    this->platforms = platforms;
-    this->deathzones = deathzones;
-    this->winzones = winzones;
-    this->enemies = enemies;
-  }
-  void LoadLevel(Player &p, std::vector<Platform> &platforms, std::vector<Platform> &deathzones, std::vector<Platform> &winzones, std::vector<Enemy> &enemies) {
-    p = this->p;
-    platforms = this->platforms;
-    deathzones = this->deathzones;
-    winzones = this->winzones;
-    enemies = this->enemies;
-  }
-};
-
-Level firstLevel() {
-  Player p(100, 100, 50, 50, 120, 200, 1.f / 60, 200);
-  std::vector<Platform> pl, de, wi;
-  std::vector<Enemy> en;
-  pl.push_back(Platform(10, 300, 600, 20));
-  pl.push_back(Platform(800, 250, 600, 20));
-  de.push_back(Platform(-400, 400, 2000, 20));
-  wi.push_back(Platform(1300, 150, 50, 100));
-  for (int i = 0; i < wi.size(); i++) wi[i].setColor(GREEN);
-  Level level(p, pl, de, wi, en);
-  return level;
-}
-
-Level secondLevel() {
-  Player p(100, 100, 50, 50, 120, 200, 1.f / 60, 200);
-  std::vector<Platform> pl, de, wi;
-  std::vector<Enemy> en;
-  pl.push_back(Platform(10, 300, 600, 20));
-  pl.push_back(Platform(800, 250, 600, 20));
-  de.push_back(Platform(-400, 400, 2000, 20));
-  wi.push_back(Platform(1300, 150, 50, 100));
-  en.push_back(Enemy(600, 220, 40, 40, 700, 500, 0, 0, 120, 0, 1.f / 60));
-  for (int i = 0; i < wi.size(); i++) wi[i].setColor(GREEN);
-  Level level(p, pl, de, wi, en);
-  return level;
-}
-
-Level thirdLevel() {
-  Player p(100, 100, 50, 50, 120, 200, 1.f / 60, 200);
-  std::vector<Platform> pl, de, wi;
-  std::vector<Enemy> en;
-  pl.push_back(Platform(10, 300, 600, 20));
-  pl.push_back(Platform(800, 250, 600, 20));
-  de.push_back(Platform(-400, 400, 2000, 20));
-  wi.push_back(Platform(1300, 150, 50, 100));
-  en.push_back(Enemy(600, 220, 40, 40, 700, 500, 0, 0, 120, 0, 1.f / 60));
-  en.push_back(Enemy(900, 220, 40, 40, 0, 0, 500, 100, 0, 120, 1.f / 60));
-  for (int i = 0; i < wi.size(); i++) wi[i].setColor(GREEN);
-  Level level(p, pl, de, wi, en);
-  return level;
-}
-
-Level fourthLevel() {
-  Player p(100, 100, 50, 50, 120, 200, 1.f / 60, 200);
-  std::vector<Platform> pl, de, wi;
-  std::vector<Enemy> en;
-  pl.push_back(Platform(10, 300, 600, 20));
-  pl.push_back(Platform(800, 250, 600, 20));
-  pl.push_back(Platform(1000, 400, 400, 20));
-  pl.push_back(Platform(1400, 400, 20, 220));
-  pl.push_back(Platform(1000, 600, 400, 20));
-  de.push_back(Platform(-1000, 700, 4000, 20));
-  wi.push_back(Platform(1300, 500, 50, 100));
-  en.push_back(Enemy(600, 220, 40, 40, 700, 500, 0, 0, 120, 0, 1.f / 60));
-  en.push_back(Enemy(900, 220, 40, 40, 0, 0, 500, 100, 0, 120, 1.f / 60));
-  for (int i = 0; i < wi.size(); i++) wi[i].setColor(GREEN);
-  Level level(p, pl, de, wi, en);
-  return level;
-}
-
-Level fifthLevel() {
-  Player p(100, 100, 50, 50, 120, 200, 1.f / 60, 200);
-  std::vector<Platform> pl, de, wi;
-  std::vector<Enemy> en;
-  pl.push_back(Platform(10, 300, 600, 20));
-  pl.push_back(Platform(800, 250, 600, 20));
-  pl.push_back(Platform(1530, 170, 600, 20));
-  pl.push_back(Platform(1700, 299, 400, 20));
-  de.push_back(Platform(-400, 400, 3000, 20));
-  wi.push_back(Platform(1720, 199, 50, 100));
-  en.push_back(Enemy(600, 220, 40, 40, 700, 500, 0, 0, 120, 0, 1.f / 60));
-  en.push_back(Enemy(900, 220, 40, 40, 0, 0, 500, 100, 0, 120, 1.f / 60));
-  en.push_back(Enemy(1780, 150, 40, 40, 0, 0, 399, 100, 0, 120, 1.f / 60));
-  for (int i = 0; i < wi.size(); i++) wi[i].setColor(GREEN);
-  Level level(p, pl, de, wi, en);
-  return level;
-}
-
-int LoadCurr() {
-  int res;
-  std::ifstream in("results.txt");
-  in >> res;
-  return res;
-}
-
 class Menu {
   Button start, cont, ext;
 public:
@@ -393,92 +186,304 @@ public:
     cont.Draw();
     ext.Draw();
   }
-  void Click(bool &st, int &current_level, bool &ex) {
+  void Click() {
     Vector2 mp = GetMousePosition();
-    st = start.IsPressed((int)mp.x, (int)mp.y);
+    if (start.IsPressed((int)mp.x, (int)mp.y)) {
+      World.inMainMenu = 0;
+      World.levelId = 0;
+    }
     if (cont.IsPressed((int)mp.x, (int)mp.y)) {
-      current_level = LoadCurr();
-      st = 1;
+      World.levelId = World.LoadLevelId();
+      World.inMainMenu = 0;
     }
     if (ext.IsPressed((int)mp.x, (int)mp.y)) {
-      ex = 1;
-      st = 0;
+      World.exit = 1;
     }
   }
 };
 
-void StoreCurr(int current_level) {
-  std::ofstream out("results.txt");
-  out << current_level;
-  out.close();
+inline void _World::Draw() {
+  levelId %= levels.size();
+  if (IsKeyPressed(KEY_F1)) {
+    World.inMainMenu = 1;
+    World.StoreLevelId();
+  }
+  BeginDrawing();
+    ClearBackground(RAYWHITE);
+    if (World.inMainMenu) {
+      Menu menu;
+      menu.Draw();
+      if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        menu.Click();
+      }
+      if (!World.inMainMenu) {
+        levels[levelId].Apply();
+      }
+    } else {
+      if (!player.isAlive()) {
+        levels[levelId].Apply();
+      }
+      if (player.isWin()) {
+        levelId++; levelId %= levels.size();
+        levels[levelId].Apply();
+      }
+      UpdateCamera();
+      BeginMode2D(World.camera);
+        for (int i = 0; i < entities.size(); i++) {
+          entities[i].Draw();
+        }
+        for (int i = 0; i < enemies.size(); i++) {
+          enemies[i].Draw();
+        }
+        player.Draw();
+        player.Update();
+        for (int i = 0; i < enemies.size(); i++) {
+          enemies[i].Update();
+        }
+      EndMode2D();
+    }
+  EndDrawing();
+}
+
+int Player::BoxCast(int xd, int yd, bool noret = false) {
+  float left = x;
+  float right = x+w;
+  float top = y;
+  float bottom = y+h;
+  float w_ = 0.2, h_ = 0.2;
+  float dx = 0.5 + xspeed / World.TARGET_FPS;
+  float dy = 0.5 + World.yspeed / World.TARGET_FPS;
+  if (xd < 0) {
+    Hittable box(left-w_, top+dy, w_, h-2*dy);
+    for (int i = 0; i < World.entities.size() && !noret; i++) {
+      if (World.entities[i].Intersects(box)) {
+        return 1;
+      }
+    }
+    for (int i = 0; i < World.deadly.size() && noret; i++) {
+      if (World.deadly[i]->Intersects(box)) {
+        alive = 0;
+      }
+    }
+    for (int i = 0; i < World.winzones.size() && noret; i++) {
+      if (World.winzones[i].Intersects(box)) {
+        win = 1;
+      }
+    }
+  }
+  if (xd > 0) {
+    Hittable box(right, top+dy, w_, h-2*dy);
+    for (int i = 0; i < World.entities.size() && !noret; i++) {
+      if (World.entities[i].Intersects(box)) {
+        return 1;
+      }
+    }
+    for (int i = 0; i < World.deadly.size() && noret; i++) {
+      if (World.deadly[i]->Intersects(box)) {
+        alive = 0;
+      }
+    }
+    for (int i = 0; i < World.winzones.size() && noret; i++) {
+      if (World.winzones[i].Intersects(box)) {
+        win = 1;
+      }
+    }
+  }
+  if (yd > 0) {
+    Hittable box(left+dx, bottom, w-2*dx, h_);
+    for (int i = 0; i < World.entities.size() && !noret; i++) {
+      if (World.entities[i].Intersects(box)) {
+        return 1;
+      }
+    }
+    for (int i = 0; i < World.deadly.size() && noret; i++) {
+      if (World.deadly[i]->Intersects(box)) {
+        alive = 0;
+      }
+    }
+    for (int i = 0; i < World.winzones.size() && noret; i++) {
+      if (World.winzones[i].Intersects(box)) {
+        win = 1;
+      }
+    }
+  }
+  if (yd < 0) {
+    Hittable box(left+dx, top-h_, w-2*dx, h_);
+    for (int i = 0; i < World.entities.size() && !noret; i++) {
+      if (World.entities[i].Intersects(box)) {
+        return 1;
+      }
+    }
+    for (int i = 0; i < World.deadly.size() && noret; i++) {
+      if (World.deadly[i]->Intersects(box)) {
+        alive = 0;
+      }
+    }
+    for (int i = 0; i < World.winzones.size() && noret; i++) {
+      if (World.winzones[i].Intersects(box)) {
+        win = 1;
+      }
+    }
+  }
+  return 0;
+}
+
+void Player::Update() {
+  BoxCast(1, 1, 1);
+  BoxCast(-1, -1, 1);
+    if (grounded && IsKeyDown(KEY_SPACE)) {
+      yspeed = -World.yspeed;
+    }
+    float cxspeed;
+    if (IsKeyDown(KEY_A)) {
+      cxspeed = -xspeed;
+    } else if (IsKeyDown(KEY_D)) {
+      cxspeed = xspeed;
+    } else {
+      cxspeed = 0;
+    }
+    if (BoxCast(cxspeed, 0)) {
+      cxspeed = 0;
+    }
+    x += cxspeed * World.dt;
+    grounded = 0;
+    if (yspeed >= 0 && BoxCast(0, 1)) {
+      yspeed = 0;
+      grounded = 1;
+    } else if (yspeed < 0 && BoxCast(0, -1)) {
+      yspeed = 0;
+    } else {
+      yspeed += World.a * World.dt;
+    }
+    if (std::abs(yspeed) > World.yspeed) yspeed = World.yspeed;
+    y += yspeed * World.dt;
+  }
+
+  void Enemy::Update() {
+    if (minx > x || x > maxx) xspeed *= -1;
+    x += xspeed * World.dt;
+    if (miny > y || y > maxy) yspeed *= -1;
+    y += yspeed * World.dt;
+  }
+
+
+  void Level::Apply() {
+    World.levelId = levelId;
+    World.deadly.clear();
+    World.enemies.clear();
+    World.entities.clear();
+    World.winzones.clear();
+    for (int i = 0; i < deathzones.size(); i++) {
+      World.deadly.push_back(&deathzones[i]);
+    }
+    for (int i = 0; i < platforms.size(); i++) {
+      World.entities.push_back(platforms[i]);
+    }
+    for (int i = 0; i < enemies.size(); i++) {
+      World.enemies.push_back(enemies[i]);
+    }
+    for (int i = 0; i < enemies.size(); i++) {
+      World.deadly.push_back(&World.enemies[i]);
+    }
+
+    for (int i = 0; i < winzones.size(); i++) {
+      World.entities.push_back(winzones[i]);
+      World.winzones.push_back(winzones[i]);
+    }
+
+    World.player = player;
+  }
+
+
+
+Level firstLevel() {
+  Level level;
+  level.levelId = 0;
+  Player p(100, 100, 50, 50, RED, 120, 0);
+  level.player = p;
+  level.platforms.push_back(Drawable(10, 300, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(800, 250, 600, 20, BLACK));
+  level.deathzones.push_back(Hittable(-400, 400, 2000, 20));
+  level.winzones.push_back(Drawable(1300, 150, 50, 100, GREEN));
+  return level;
+}
+
+Level secondLevel() {
+  Level level;
+  level.levelId = 1;
+  Player p(100, 100, 50, 50, RED, 120, 0);
+  level.player = p;
+  level.platforms.push_back(Drawable(10, 300, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(800, 250, 600, 20, BLACK));
+  level.deathzones.push_back(Drawable(-400, 400, 2000, 20, BLACK));
+  level.winzones.push_back(Drawable(1300, 150, 50, 100, GREEN));
+  level.enemies.push_back(Enemy(600, 220, 40, 40, YELLOW, 120, 0, 500, 700, 0, 0));
+  return level;
+}
+
+Level thirdLevel() {
+  Level level;
+  level.levelId = 2;
+  Player p(100, 100, 50, 50, RED, 120, 0);
+  level.player = p;
+  level.platforms.push_back(Drawable(10, 300, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(800, 250, 600, 20, BLACK));
+  level.deathzones.push_back(Drawable(-400, 400, 2000, 20, BLACK));
+  level.winzones.push_back(Drawable(1300, 150, 50, 100, GREEN));
+  level.enemies.push_back(Enemy(600, 220, 40, 40, YELLOW, 120, 0, 500, 700, 0, 0));
+  level.enemies.push_back(Enemy(900, 220, 40, 40, YELLOW, 0, 120, 0, 0, 100, 500));
+  return level;
+}
+
+Level fourthLevel() {
+  Level level;
+  level.levelId = 3;
+  Player p(100, 100, 50, 50, RED, 120, 0);
+  level.player = p;
+  level.platforms.push_back(Drawable(10, 300, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(800, 250, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(1000, 400, 400, 20, BLACK));
+  level.platforms.push_back(Drawable(1400, 400, 20, 220, BLACK));
+  level.platforms.push_back(Drawable(1000, 600, 400, 20, BLACK));
+  level.deathzones.push_back(Drawable(-1000, 700, 4000, 20, BLACK));
+  level.winzones.push_back(Drawable(1300, 500, 50, 100, GREEN));
+  level.enemies.push_back(Enemy(600, 220, 40, 40, YELLOW, 120, 0, 500, 700, 0, 0));
+  level.enemies.push_back(Enemy(900, 220, 40, 40, YELLOW, 0, 120, 0, 0, 100, 500));
+  return level;
+}
+
+Level fifthLevel() {
+  Level level;
+  level.levelId = 4;
+  Player p(100, 100, 50, 50, RED, 120, 0);
+  level.player = p;
+  level.platforms.push_back(Drawable(10, 300, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(800, 250, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(1530, 170, 600, 20, BLACK));
+  level.platforms.push_back(Drawable(1700, 299, 400, 20, BLACK));
+  level.deathzones.push_back(Drawable(-400, 400, 3000, 20, BLACK));
+  level.winzones.push_back(Drawable(1720, 199, 50, 100, GREEN));
+  level.enemies.push_back(Enemy(600, 220, 40, 40, YELLOW, 120, 0, 500, 700, 0, 0));
+  level.enemies.push_back(Enemy(900, 220, 40, 40, YELLOW, 0, 120, 0, 0, 100, 500));
+  level.enemies.push_back(Enemy(1780, 150, 40, 40, YELLOW, 0, 120, 0, 0, 100, 399));
+  return level;
 }
 
 int main () {
-  SetTraceLogLevel(LOG_NONE); 
   InitWindow(screenWidth, screenHeight, "c++lab");
-  FILE* f;
-  if (!(f = fopen("results.txt", "r"))) {
-    StoreCurr(0);
-  } else {
-    fclose(f);
+  SetTargetFPS(World.TARGET_FPS);
+
+  World.levels.push_back(firstLevel());
+  World.levels.push_back(secondLevel());
+  World.levels.push_back(thirdLevel());
+  World.levels.push_back(fourthLevel());
+  World.levels.push_back(fifthLevel());
+
+  while (!World.exit && !WindowShouldClose()) {
+    World.Draw();
   }
+  World.StoreLevelId();
 
-  SetTargetFPS(60);
-
-  bool exit = 0;
-
-  Button b(10, 10, 100, 100, 20, "text");
-
-  Player p;
-  Level levels[5] = { firstLevel(), secondLevel(), thirdLevel(), fourthLevel(), fifthLevel() };
-
-  Camera2D camera = { 0 };
-  camera.offset = { screenWidth / 2, screenHeight / 2 };
-  camera.rotation = 0;
-  camera.zoom = 1;
-
-  Menu m;
-
-  bool start = 0;
-  int current_level = LoadCurr();
-  const int max_level = 5;
-
-  while (!exit && !WindowShouldClose()) {
-    camera.target = p.CamTarget();
-
-    if (IsKeyPressed(KEY_F1)) {
-      start = 0;
-      StoreCurr(current_level);
-    }
-
-    BeginDrawing();
-
-      ClearBackground(RAYWHITE);
-      if (!start) {
-        m.Draw();
-        if (IsMouseButtonPressed(0 /* MOUSE_BUTTON_LEFT */)) {
-          m.Click(start, current_level, exit);
-          if (start) { 
-            levels[current_level].LoadLevel(p, Platforms, deathzones, winzones, enemies);
-          }
-        }
-      } else {
-      if (!p.Alive()) { levels[current_level].LoadLevel(p, Platforms, deathzones, winzones, enemies); }
-      if (p.Win()) { current_level++; current_level %= max_level; levels[current_level].LoadLevel(p, Platforms, deathzones, winzones, enemies); }
-      BeginMode2D(camera);
-        p.ApplyInput();
-        p.Draw();
-        for (int i = 0; i < Platforms.size(); i++) Platforms[i].Draw();
-        for (int i = 0; i < winzones.size(); i++) winzones[i].Draw();
-        for (int i = 0; i < enemies.size(); i++) enemies[i].Draw();
-        p.Update();
-        for (int i = 0; i < enemies.size(); i++) enemies[i].Update();
-      EndMode2D();
-      }
-
-    EndDrawing();    
-  }
-  StoreCurr(current_level);
   CloseWindow();
 
   return 0;
